@@ -1,117 +1,222 @@
-﻿using System.Data.SQLite;
-using System.Data;
+﻿using System.Data;
+using System.Data.SQLite;
+
 
 namespace SQLiteCs
 {
+    public struct QueryResult(string[] columnNames, Type[] columnDataTypes, object?[][] rows, int rowCount)
+    {
+        public string[] ColumnNames = columnNames;
+        public Type[] ColumnDataTypes = columnDataTypes;
+        public object?[][] Rows = rows;
+        public int ColumnCount = columnNames.Length;
+        public int RowCount = rowCount;
+    }
+
     public class Database
     {
-        private SQLiteConnection _connection;
+        private string _databasePath;
+        private SQLiteConnection? _connection;
 
-        public Database(string dbPath)
+        private bool _testingMode = false;
+        private bool _sqlExceptions = false;
+
+        public Database(string databasePath)
         {
-            _connection = new SQLiteConnection($"Data source={dbPath};foreign keys = true;");
-            _connection.Open();
+            _databasePath = databasePath;
+            ConnectDatabase(databasePath);
         }
 
         ~Database()
         {
-            CloseDB();
+            CloseDatabase();
         }
 
-        public void CloseDB()
+        private void ConnectDatabase(string databasePath)
+        {
+            _connection = new SQLiteConnection($"Data source={databasePath};foreign keys = true;");
+            _connection.Open();
+        }
+
+        private void DisconnectDatabase()
+        {
+            if (_connection == null) return;
+            _connection.Close();
+            _connection.Dispose();
+        }
+
+        public void CloseDatabase()
         {
             if (_connection != null)
             {
-                _connection.Close();
-                _connection.Dispose();
+                DisconnectDatabase();
+
+                if (_testingMode)
+                {
+                    try
+                    {
+                        GC.Collect();
+                        GC.WaitForPendingFinalizers();
+                        File.Delete(_databasePath);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine(ex.Message);
+                    }
+                } 
             }
         }
 
-        public DataTable Query(string sql)
+        private static QueryResult CreateQueryResult(DataTable dataTable)
+        {
+            int columnCount = dataTable.Columns.Count;
+            int rowCount = dataTable.Rows.Count;
+            string[] columnNames = new string[columnCount];
+            Type[] columnDataTypes = new Type[columnCount];
+            object?[][] rows = new object?[rowCount][];
+
+            if (dataTable.Columns.Count == 0) return new QueryResult(columnNames, columnDataTypes, rows, rowCount);
+            
+            for (int i = 0; i < columnCount; i++)
+            {
+                DataColumn column = dataTable.Columns[i];
+                columnNames[i] = column.ColumnName;
+                columnDataTypes[i] = column.DataType;
+            }
+
+            for (int i = 0; i < rowCount; i++)
+            {
+                object?[] row = new object?[columnCount];
+                for (int j = 0; j < columnCount; j++)
+                {
+                    row[j] = dataTable.Rows[i].ItemArray[j];
+                }
+                rows[i] = row;
+            }
+
+            return new QueryResult(columnNames, columnDataTypes, rows, rowCount);
+        }
+
+        public QueryResult Query(string sql)
         {
             DataTable dataTable = new DataTable();
-
+            
             try
             {
                 SQLiteCommand command = new SQLiteCommand(sql, _connection);
                 SQLiteDataAdapter adapter = new SQLiteDataAdapter(command);
 
                 adapter.Fill(dataTable);
-                return dataTable;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"\nChyba: {ex.Message}\nQuery:\n{sql}\n");
+                if (!_sqlExceptions) Console.WriteLine($"SQL chyba: {ex.Message}\nQuery:\n{sql}\n");
+                else throw;
             }
 
-            return dataTable;
+            return CreateQueryResult(dataTable);
         }
 
-        public object Scalar(string sql) //object -> object?
+        public object? Scalar(string sql)
         {
             try
             {
-                var command = new SQLiteCommand(sql, _connection); //using
+                var command = new SQLiteCommand(sql, _connection);
+
                 return command.ExecuteScalar();
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"\nChyba: {ex.Message}\nScalar:\n{sql}\n");
+                if (!_sqlExceptions) Console.WriteLine($"SQL chyba: {ex.Message}\nScalar:\n{sql}\n");
+                else throw;
+
+                return null;
             }
-            return null;
         }
 
-        public void NonQuery(string sql) //Možnost přidat vrácení bool
+        public bool NonQuery(string sql)
         {
             try
             {
-                SQLiteCommand command = new SQLiteCommand(sql, _connection); //using
+                SQLiteCommand command = new SQLiteCommand(sql, _connection);
                 command.ExecuteNonQuery();
+
+                return true;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"\nChyba: {ex.Message}\nNonQuery:\n{sql}\n");
+                if (!_sqlExceptions) Console.WriteLine($"SQL chyba: {ex.Message}\nNonQuery:\n{sql}\n");
+                else throw;
+
+                return false;
             }
         }
 
-        public void InsertUser(string jmeno, string email)
+        public static Database? CopyDatabase(string databasePath, string databaseCopyPath)
         {
-            var command = new SQLiteCommand("INSERT INTO Uzivatele (jmeno, email) VALUES (@jmeno, @email);", _connection); //using
-            command.Parameters.AddWithValue("@jmeno", jmeno);
-            command.Parameters.AddWithValue("@email", email);
-            command.ExecuteNonQuery();
+            try
+            {
+                File.Copy(databasePath, databaseCopyPath, true);
+
+                return new Database(databaseCopyPath);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"{databasePath}: Při kopírování došlo k chybě:\n{ex.Message}\n");
+
+                return null;
+            }
         }
 
-        /*
-        data.Columns = ["id", "jmeno", "email"]
-        data.Rows = [
-            [1, "Anna", "anna@example.com"],
-            [2, "Petr", "petr@example.com"]
-        ]
-        */
-
-        public void PrintQueryResult(string sql)
+        public Database? CopyDatabase(string databaseCopyPath)
         {
-            var data = Query(sql);
-
-            if (data.Columns.Count == 0) return; //Error handling
-
-            foreach (DataColumn col in data.Columns)
+            try
             {
-                Console.Write($"{col.ColumnName,-30} ");
-            }
-            Console.WriteLine();
-            Console.WriteLine(new string('-', data.Columns.Count * 32));
+                File.Copy(_databasePath, databaseCopyPath, true);
 
-            foreach (DataRow row in data.Rows)
-            {
-                foreach (var item in row.ItemArray)
-                {
-                    Console.Write($"{item,-30} ");
-                }
-                Console.WriteLine();
+                return new Database(databaseCopyPath);
             }
-            Console.WriteLine();
+            catch (Exception ex)
+            {
+                Console.WriteLine($"{_databasePath}: Při kopírování došlo k chybě:\n{ex.Message}\n");
+
+                return null;
+            }
+        }
+
+        public bool ClearDatabase()
+        {
+            if (!_testingMode)
+            {
+                Console.WriteLine($"{_databasePath}: Vymazat obsah je možné pouze u databází, které jsou v testovacím módu.");
+                Console.WriteLine("Testovací mód je pro danou databázi možné zapnout member metodou: SetTestingMode(true);\n");
+
+                return false;
+            }
+
+            try
+            {
+                CloseDatabase();
+                ConnectDatabase(_databasePath);
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"{_databasePath}: Při mazání obsahu došlo k chybě:\n{ex.Message}\n");
+
+                return false;
+            }
+        }
+
+        public void SetTestingMode(bool enable)
+        { 
+            _testingMode = enable;
+        }
+
+        public void SetSQLExceptions(bool enable)
+        { 
+            _sqlExceptions = enable;
         }
     }
 }
