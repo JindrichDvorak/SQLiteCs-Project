@@ -8,6 +8,16 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <None Remove="csfd.db" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="csfd.db">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\SQLiteCs\SQLiteCs.csproj" />
   </ItemGroup>
 
