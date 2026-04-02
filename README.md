@@ -28,11 +28,11 @@ Pro úspěšné řešení všech připravených úloh není potřeba nijak zasah
 
 Při práci s databázemi obecně sledujeme následující kroky:
 
-- Otevření databáze.
-- Interakce s databází.
-- Uzavření databáze.
+- 1: Otevření databáze.
+- 2: Interakce s databází.
+- 3: Uzavření databáze.
 
-### Otevření databáze
+### 1: Otevření databáze
 
 Knihovna `SQLiteCs` pracuje s databázemi, které jsou uloženy lokálně na disku. Proto je potřeba specifikovat takzvanou cestu (`path`) k umístění databáze, aby mohlo vzniknout spojení mezi danou databází a naším `C#` programem. Například, pro otevření databáze `csfd.db` použijeme příkaz:
 ```cs
@@ -46,10 +46,95 @@ Database db = new Database("newDatabase.db");
 ```
 Tento příkaz automaticky vytvoří nový soubor s názvem `newDatabase.db` ve stejné složce, ze které se spouští náš program -- používali jsme tedy takzvané **relativní cesty**.
 
-Knihovna `SQLiteCs` umožňuje otevřít databázi i v "libovolném" adresáři. Za tímto účelem bychom použili takzvanou **absolutní cestu**. Například, pokud se databáze `csfd.db` nachází přímo na disku `C`, otevřeme ji následujícím příkazem (protože symbolem `\` začínají takzvané escape sekvence, musíme místo `\` psát `\\`):
+Knihovna `SQLiteCs` umožňuje otevřít databázi i v "libovolném" adresáři. Za tímto účelem bychom použili takzvanou **absolutní cestu**. Například, pokud se databáze `csfd.db` nachází přímo na disku `C`, otevřeme ji následujícím příkazem (protože symbolem `\` začínají takzvané *escape sekvence*, musíme místo `\` psát `\\`):
 ```cs
 Database db = new Database("C:\\csfd.db");
 ```
 Tímto způsobem je možné otevřít (nebo vytvořit) "libovolné" množství **různých** databází. 
 
-`SQL` příkazy modifikují trvalou paměť (přepisují data v souboru na disku), a proto při jejich používání vzniká riziko, že nějaký jejich nezamýšlený vedlejší efekt nenávratně přepíše databázi, což 
+#### Kopírování databází a testovací mód
+
+`SQL` příkazy modifikují trvalou paměť (přepisují data v souboru na disku), a proto je nemůžeme "jen tak" opakovat (jako u "klasických" programů, které pracují čistě s operační pamětí), čemuž je velmi těžké se vyhnout, když se teprve učíme s `SQL` příkazy pracovat. `SQLiteCs` proto umožňuje kopírovat databáze a nastavit u nich takzvaný *testovací mód*, který dále umožňuje databázi smazat. 
+
+Chceme-li si například vyzkoušet nějaké `SQL` příkazy na databázi `csfd.db` bez rizika "poničení" databáze, provedeme následující kroky:
+
+- a: Vytvoříme kopii databáze `csfd.db` pod názvem (například) `test.db`.
+- b: U databáze `test.db` nastavíme testovací mód.
+- c: Na databázi `test.db` provedeme určité `SQL` příkazy a dotazy.
+
+Tyto kroky pomocí knihovny `SQLiteCs` realizujeme následujícím způsobem:
+```cs
+Database test = Database.CopyDatabase("csfd.db", "test.db"); // a
+
+test.SetTestingMode(true);                                   // b
+
+test.NonQuery("my NonQuery");                                // c
+test.Query("my Query");                                      // c
+```
+Testovací mód umožní smazat obsah databáze příkazem: `test.ClearDatabase();`, který nám umožní sekvenčně testovat více `SQL` příkazů (které nemusí být navzájem kompatibilní) při jediném spuštění aplikace:
+```cs
+test.NonQuery("my NonQuery 1");
+test.Query("my Query 1");
+
+test.ClearDatabase();
+
+test.NonQuery("my NonQuery 2");
+test.Query("my Query 2");
+```
+
+### 2: Interakce s databází
+
+S relačními databázemi obecně interagujeme pomocí takzvaných dotazů a příkazů, což jsou funkce, respektive metody, které přijímají jako vstupní parametr validní `SQL` kód jako `string`. Pokud zadaný `SQL` kód není validní, tak `SQLiteCs` defaultně vypíše chybovou hlášku do konzole bez zastavení programu. Chceme-li, aby `SQL` chyba zastavila chod programu vyvoláním výjimky (chybová hláška se zobrazí u relevantního řádku kódu), provedeme na konkrétní databázi (například `db`) příkaz: `db.SetSQLExceptions(true);`.
+
+- Dotazy:
+  - Dotazujeme se na **tabulku** -- `Query()`.
+  - Dotazujeme se na **jedinou hodnotu** -- `Scalar()`.
+- Příkazy -- `NonQuery()`.
+
+#### `Query()`
+
+Zadáváme `SQL` **dotaz** a získáváme objekt typu `QueryResult`. Výsledek `SQL` dotazu na databázi `db` získáme následujícím způsobem:
+```cs
+QueryResult res = db.Query("my Query");
+```
+Pak objekt `res` typu `QueryResult` reprezentuje tabulku pomocí svých proměnných:
+
+- `ColumnNames` -- `string` pole obsahující názvy získaných sloupců (atributů).
+- `Rows` -- pole obsahující `object` pole, které reprezentují jednotlivé řádky (záznamy).
+
+| `res.ColumnNames[0]` | `res.ColumnNames[1]` | `res.ColumnNames[2]` |
+| :-: | :-: | :-: |
+| `res.Rows[0][0]` | `res.Rows[0][1]` | `res.Rows[0][2]` |
+| `res.Rows[1][0]` | `res.Rows[1][1]` | `res.Rows[1][2]` |
+| `res.Rows[2][0]` | `res.Rows[2][1]` | `res.Rows[2][2]` |
+
+Potřebujeme-li dále pracovat s výsledky `Query()`, musíme nejprve provést `cast` na odpovídající datový typ. Pokud je například první atribut (sloupec) typu `int` (tato informace je uložena v proměnné `ColumnDataTypes` objektů typu `QueryResult`) a potřebujeme dále počítat s 1. hodnotou 1. řádku, pak použijeme následující příkaz:
+```cs
+int data = (int)res.Rows[0][0];
+```
+
+#### `Scalar()`
+
+Zadáváme `SQL` **dotaz** a získáváme **jediný objekt** typu `object`. Výsledek `SQL` dotazu na databázi `db` získáme následujícím způsobem:
+```cs
+object res = db.Scalar("my Query");
+```
+Potřebujeme-li dále pracovat s výsledkem `Scalar()`, musíme nejprve provést `cast` na odpovídající datový typ. Pokud se například jedná o atribut typu `float`, pak použijeme následující příkaz:
+```cs
+float data = (float)res;
+```
+
+#### `NonQuery()`
+
+Zadáváme `SQL` **příkaz**, který modifikuje databázi a získáváme informaci o tom, zdali tato modifikace byla úspěšná (jako `bool`). Databázi `db` modifikujeme následujícím způsobem:
+```cs
+db.NonQuery("my NonQuery");
+```
+
+### 3: Uzavření databáze
+
+Jakmile dokončíme svou práci s danou databází, tak bychom ji měli takzvaně uzavřít, tedy přerušit spojení mezi samotnou databází a `C#` programem, čehož pro databázi `db` dosáhneme příkazem:
+```cs
+db.CloseDatabase();
+```
+Pokud jsme dříve u této databáze nastavili testovací mód (pomocí příkazu: `db.SetTestingMode(true);`), tak se po uzavření databáze **rovnou vymaže i soubor, který ji obsahuje**.
